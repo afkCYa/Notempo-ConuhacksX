@@ -67,3 +67,4 @@ def serve_file(filename):
 if __name__ == '__main__':
     # Use 0.0.0.0 for accessibility or 127.0.0.1 for local only
     app.run(host='127.0.0.1', port=5000, debug=True)
+
