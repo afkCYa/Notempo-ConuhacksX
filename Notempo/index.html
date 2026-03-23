@@ -4,16 +4,36 @@
     <meta charset="utf-8">
     <title>Sheet Music Viewer</title>
     <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.0/build/opensheetmusicdisplay.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
         #osmd-container {
-            width: 100%;
-            height: 50%;
-            overflow-x: scroll;
+            width: 800px;  /* A4 width at 96dpi */
+            height: auto;   /* Let it expand naturally */
+            overflow: visible;
             border: 1px solid #ccc;
+            margin: 20px auto;  /* Center it */
+            background: white;
         }
 
         #upload-bar {
             margin-bottom: 15px;
+        }
+
+        button {
+            padding: 8px 15px;
+            margin-right: 5px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
         }
     </style>
 </head>
@@ -25,14 +45,21 @@
     <div id="upload-bar">
         <input type="file" id="fileInput" accept=".musicxml,.mxl">
         <button onclick="loadFile(event)">Load sheet</button>
+        <button id="downloadPdfBtn" onclick="downloadAsPDF()" disabled>Download as PDF</button>
     </div>
 
     <div id="osmd-container"></div>
 
     <script>
         const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(
-            document.getElementById("osmd-container")
+            document.getElementById("osmd-container"),
+            {
+                autoResize: true,
+                pageFormat: "A4"
+            }
         );
+
+        let currentSheetName = null;
 
         async function loadFile(event) {
             const inputEl = document.getElementById('fileInput');
@@ -56,15 +83,169 @@
                     throw new Error(txt || 'Upload failed');
                 }
                 const data = await resp.json();
+                currentSheetName = file.name.split('.')[0];
                 const fileUrl = (data.file_url.startsWith('/') ? data.file_url : '/' + data.file_url) + '?t=' + Date.now();
 
                 await osmd.load(fileUrl);
                 osmd.render();
+
+                // Enable PDF download button
+                document.getElementById('downloadPdfBtn').disabled = false;
             } catch (err) {
                 alert('Error: ' + err.message);
                 console.error(err);
             } finally {
                 if (button) button.innerText = prevText;
+            }
+        }
+
+        // Find page break boundaries by detecting completely-white horizontal lines
+        function findPageBreaks(imageData, width, height, threshold = 0.99) {
+            const data = imageData.data;
+            const pageBreaks = [];
+            const A4_HEIGHT_PX = 1122; // A4 at 96dpi
+
+            for (let y = 0; y < height; y++) {
+                let whitePixels = 0;
+                let totalPixels = 0;
+
+                // Check how many pixels in this row are "white" (light colored)
+                for (let x = 0; x < width; x++) {
+                    const idx = (y * width + x) * 4;
+                    const r = data[idx];
+                    const g = data[idx + 1];
+                    const b = data[idx + 2];
+                    const a = data[idx + 3];
+
+                    totalPixels++;
+                    // White/light: R, G, B all > 240
+                    if (r > 240 && g > 240 && b > 240 && a > 200) {
+                        whitePixels++;
+                    }
+                }
+
+                const whiteRatio = whitePixels / totalPixels;
+                
+                // If this row is almost entirely white (99%+), it's likely a page break
+                if (whiteRatio > threshold) {
+                    pageBreaks.push(y);
+                }
+            }
+
+            // Filter to keep only significant breaks (spaced apart)
+            const significantBreaks = [];
+            let lastBreak = -200;
+
+            for (let brk of pageBreaks) {
+                if (brk - lastBreak > 50) { // At least 50px apart
+                    significantBreaks.push(brk);
+                    lastBreak = brk;
+                }
+            }
+
+            return significantBreaks;
+        }
+
+        // Split canvas into pages based on detected breaks
+        function splitCanvasByBreaks(canvas, breaks) {
+            const pages = [];
+            const A4_HEIGHT_PX = 1122; // A4 at 96dpi (297mm * 96/25.4)
+            
+            let startY = 0;
+            
+            for (let i = 0; i <= breaks.length; i++) {
+                let endY;
+                
+                if (i < breaks.length) {
+                    endY = Math.min(breaks[i], startY + A4_HEIGHT_PX);
+                } else {
+                    endY = canvas.height;
+                }
+
+                if (endY - startY > 50) { // Only create page if it has meaningful content
+                    const ctx = document.createElement('canvas');
+                    ctx.width = canvas.width;
+                    ctx.height = endY - startY;
+                    
+                    const ctxCtx = ctx.getContext('2d');
+                    ctxCtx.drawImage(
+                        canvas,
+                        0, startY,
+                        canvas.width, endY - startY,
+                        0, 0,
+                        canvas.width, endY - startY
+                    );
+                    
+                    pages.push(ctx);
+                }
+                
+                startY = endY;
+                if (startY >= canvas.height) break;
+            }
+
+            return pages;
+        }
+
+        async function downloadAsPDF() {
+            const btn = document.getElementById('downloadPdfBtn');
+            const prevText = btn.innerText;
+            btn.innerText = 'Generating PDF...';
+            btn.disabled = true;
+
+            try {
+                const container = document.getElementById('osmd-container');
+                
+                // Capture the full music sheet
+                const canvas = await html2canvas(container, {
+                    scale: 2,
+                    logging: false,
+                    allowTaint: true,
+                    useCORS: true,
+                    backgroundColor: '#ffffff'
+                });
+
+                // Analyze canvas to find page breaks
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pageBreaks = findPageBreaks(imageData, canvas.width, canvas.height);
+
+                // Split canvas into individual pages
+                const pages = splitCanvasByBreaks(canvas, pageBreaks);
+
+                // Create PDF
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF({
+                    orientation: 'portrait',
+                    unit: 'mm',
+                    format: 'a4'
+                });
+
+                const pageWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
+                const imgWidth = pageWidth;
+                
+                // Add each page to PDF
+                for (let i = 0; i < pages.length; i++) {
+                    const pageCanvas = pages[i];
+                    const imgHeight = (pageCanvas.height / pageCanvas.width) * imgWidth;
+                    const imgData = pageCanvas.toDataURL('image/png');
+
+                    if (i > 0) {
+                        pdf.addPage();
+                    }
+
+                    pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+                }
+
+                // Download PDF
+                const filename = currentSheetName ? `${currentSheetName}_sheet.pdf` : 'sheet.pdf';
+                pdf.save(filename);
+            } catch (err) {
+                alert('Error generating PDF: ' + err.message);
+                console.error(err);
+            } finally {
+                btn.innerText = prevText;
+                btn.disabled = false;
             }
         }
 

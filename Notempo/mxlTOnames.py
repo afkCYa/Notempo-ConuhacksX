@@ -50,7 +50,15 @@ def process_file(input_path, output_dir=None):
 
     try:
         if input_path.lower().endswith('.mxl'):
-            temp_dir = tempfile.mkdtemp(prefix=f"mxl_extract_{sheetname}_")
+            # Create temp directory with readable sheet name
+            temp_base = os.path.join(tempfile.gettempdir(), f"mxl_extract_{sheetname}")
+            temp_dir = temp_base
+            counter = 1
+            # Handle potential collisions by adding a counter
+            while os.path.exists(temp_dir) and os.listdir(temp_dir):
+                temp_dir = f"{temp_base}_{counter}"
+                counter += 1
+            os.makedirs(temp_dir, exist_ok=True)
 
             with zipfile.ZipFile(input_path, "r") as zip_ref:
                 zip_ref.extractall(temp_dir)

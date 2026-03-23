@@ -6,7 +6,7 @@ Give it a music_sheet.mxl file, this displays the sheet with notes names. Functi
 - go to folder location/enter it
 
 FYI if you're really new, `***` see stars
-- run `.\start.ps1`
+- run >> `.\start.ps1`
 - open a web browser
 - copy paste in the address >>  http://127.0.0.1:5000/
 

@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
 import os
-import uuid
 from mxlTOnames import process_file
 
 ALLOWED_EXTENSIONS = {"mxl", "musicxml", "xml"}
@@ -32,10 +31,9 @@ def upload():
     if not allowed_file(file.filename):
         return "Unsupported file extension", 400
 
-    # Save file with a unique prefix to avoid collisions
+    # Save file with the original name for clarity
     original_filename = secure_filename(file.filename)
-    unique_prefix = uuid.uuid4().hex
-    save_filename = f"{unique_prefix}_{original_filename}"
+    save_filename = original_filename
     save_path = os.path.join(UPLOAD_FOLDER, save_filename)
     file.save(save_path)
 
